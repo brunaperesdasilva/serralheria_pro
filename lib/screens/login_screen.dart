@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_auth.dart';
 import '../core/app_colors.dart';
+import '../core/errors/error_message.dart';
+import '../core/validation/form_validators.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -10,140 +14,171 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final TextEditingController usuarioController = TextEditingController();
-  final TextEditingController senhaController = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  final userController = TextEditingController();
+  final passwordController = TextEditingController();
+  bool isLoading = false;
+  bool obscurePassword = true;
 
-  bool ocultarSenha = true;
-  String mensagemErro = '';
+  void login() async {
+    final user = userController.text.trim();
+    final pass = passwordController.text;
 
-  void realizarLogin() {
-    final usuario = usuarioController.text.trim();
-    final senha = senhaController.text.trim();
+    if (!(formKey.currentState?.validate() ?? false)) return;
 
-    if (usuario == 'admin' && senha == '1234') {
-      Navigator.pushReplacementNamed(context, '/dashboard');
-    } else {
-      setState(() {
-        mensagemErro = 'Usuário ou senha inválidos.';
-      });
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      await AppAuth.repository.signIn(email: user, password: pass);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ErrorMessage.from(error))),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
-  @override
-  void dispose() {
-    usuarioController.dispose();
-    senhaController.dispose();
-    super.dispose();
+  Future<void> resetPassword() async {
+    final email = userController.text.trim();
+    final validationError = FormValidators.email(email);
+    if (validationError != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(validationError)));
+      return;
+    }
+    try {
+      await AppAuth.repository.sendPasswordResetEmail(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            'Se existir uma conta para $email, o Firebase enviará as instruções. Verifique também spam e lixo eletrônico.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ErrorMessage.from(error))),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 430),
             child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(30),
               decoration: BoxDecoration(
                 color: AppColors.white,
-                borderRadius: BorderRadius.circular(22),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: AppColors.lightGray),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
-                    blurRadius: 18,
-                    offset: const Offset(0, 8),
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 28,
+                    offset: const Offset(0, 12),
                   ),
                 ],
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Image.asset(
-                    'assets/images/logo.png',
-                    width: 210,
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Bem-vindo',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.graphite,
-                        ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Acesse sua conta para continuar',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppColors.darkGray,
-                        ),
-                  ),
-                  const SizedBox(height: 28),
-                  TextField(
-                    controller: usuarioController,
-                    decoration: const InputDecoration(
-                      labelText: 'Usuário',
-                      prefixIcon: Icon(Icons.person_outline),
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Image.asset(
+                      'assets/images/logo.png',
+                      width: 128,
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: senhaController,
-                    obscureText: ocultarSenha,
-                    decoration: InputDecoration(
-                      labelText: 'Senha',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      suffixIcon: IconButton(
-                        onPressed: () {
-                          setState(() {
-                            ocultarSenha = !ocultarSenha;
-                          });
-                        },
-                        icon: Icon(
-                          ocultarSenha
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined,
+                    const SizedBox(height: 24),
+                    Text('Bem-vindo',
+                        style: Theme.of(context).textTheme.headlineSmall),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Acesse sua empresa para continuar',
+                      style: TextStyle(color: AppColors.darkGray),
+                    ),
+                    const SizedBox(height: 28),
+                    TextFormField(
+                      controller: userController,
+                      validator: FormValidators.email,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'E-mail',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: passwordController,
+                      validator: FormValidators.password,
+                      obscureText: obscurePassword,
+                      onFieldSubmitted: (_) => isLoading ? null : login(),
+                      decoration: InputDecoration(
+                        labelText: 'Senha',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          tooltip: obscurePassword
+                              ? 'Mostrar senha'
+                              : 'Ocultar senha',
+                          onPressed: () => setState(
+                              () => obscurePassword = !obscurePassword),
+                          icon: Icon(obscurePassword
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined),
                         ),
                       ),
                     ),
-                  ),
-                  if (mensagemErro.isNotEmpty) ...[
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: isLoading ? null : resetPassword,
+                        child: const Text('Esqueci minha senha'),
+                      ),
+                    ),
                     const SizedBox(height: 12),
-                    Text(
-                      mensagemErro,
-                      style: const TextStyle(
-                        color: AppColors.danger,
-                        fontWeight: FontWeight.w500,
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: isLoading ? null : login,
+                        child: isLoading
+                            ? const CircularProgressIndicator(
+                                color: AppColors.white)
+                            : const Text('Entrar'),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const RegisterScreen(),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        'Não tem conta? Cadastre-se',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: realizarLogin,
-                    child: const Text('Entrar'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextButton(
-                    onPressed: () {
-                      usuarioController.text = 'admin';
-                      senhaController.text = '1234';
-
-                      setState(() {
-                        mensagemErro = '';
-                      });
-                    },
-                    child: const Text(
-                      'Usar acesso de teste',
-                      style: TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

@@ -1,4 +1,4 @@
-package com.example.serralheria_pro
+package com.serralheriapro.app
 
 import io.flutter.embedding.android.FlutterActivity
 

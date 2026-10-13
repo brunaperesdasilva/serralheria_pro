@@ -1,518 +1,347 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_card.dart';
 import '../core/app_colors.dart';
+import '../core/widgets/company_avatar.dart';
 import '../data/app_data.dart';
+import '../models/budget.dart';
+import '../models/material_item.dart';
 import '../models/schedule_item.dart';
-import 'budgets_screen.dart';
-import 'clients_screen.dart';
-import 'schedule_screen.dart';
-import 'stock_screen.dart';
+import 'profile_screen.dart';
 
-class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+class DashboardScreen extends StatelessWidget {
+  const DashboardScreen({
+    super.key,
+    this.revision = 0,
+    required this.onNavigate,
+  });
 
-  @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
-}
-
-class _DashboardScreenState extends State<DashboardScreen> {
-  int currentIndex = 0;
-
-  final List<String> titles = const [
-    'Dashboard',
-    'Clientes',
-    'Orçamentos',
-    'Estoque',
-    'Agenda',
-  ];
-
-  void changePage(int index) {
-    setState(() {
-      currentIndex = index;
-    });
-  }
+  final int revision;
+  final ValueChanged<int> onNavigate;
 
   @override
   Widget build(BuildContext context) {
-    final List<Widget> pages = [
-      DashboardHomeContent(
-        onNovoOrcamento: () {
-          changePage(2);
-        },
-        onAbrirAgenda: () {
-          changePage(4);
-        },
-      ),
-      const ClientsScreen(),
-      const BudgetsScreen(),
-      const StockScreen(),
-      const ScheduleScreen(),
-    ];
+    final now = DateTime.now();
+    final today = AppData.schedules.where((item) {
+      final date = item.scheduledAt;
+      return date != null &&
+          date.year == now.year &&
+          date.month == now.month &&
+          date.day == now.day &&
+          item.status != ScheduleStatus.cancelled;
+    }).toList()
+      ..sort((a, b) => (a.scheduledAt ?? now).compareTo(b.scheduledAt ?? now));
+    final pending = AppData.budgets
+        .where((item) =>
+            item.status == BudgetStatus.draft ||
+            item.status == BudgetStatus.sent)
+        .length;
+    final approved = AppData.budgets
+        .where((item) =>
+            item.status == BudgetStatus.approved &&
+            item.createdAt.year == now.year &&
+            item.createdAt.month == now.month)
+        .fold<double>(0, (total, item) => total + item.finalValue);
+    final expiring = AppData.budgets.where((item) {
+      final days = item.validUntil.difference(now).inDays;
+      return item.status != BudgetStatus.approved &&
+          item.status != BudgetStatus.declined &&
+          days >= 0 &&
+          days <= 7;
+    }).length;
+    final lowStock = AppData.materials
+        .where((item) => item.needsAttention)
+        .toList()
+      ..sort((a, b) => a.quantity.compareTo(b.quantity));
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(titles[currentIndex]),
-        actions: [
-          IconButton(
-            tooltip: 'Perfil',
-            onPressed: () {
-              Navigator.pushNamed(context, '/profile');
-            },
-            icon: const Icon(Icons.person_outline),
-          ),
-          IconButton(
-            tooltip: 'Sair',
-            onPressed: () {
-              Navigator.pushReplacementNamed(context, '/login');
-            },
-            icon: const Icon(Icons.logout),
-          ),
-        ],
+        centerTitle: false,
+        titleSpacing: 20,
+        title: Text(AppData.companyProfile.companyName.isEmpty
+            ? 'Serralheria Pro'
+            : AppData.companyProfile.companyName),
+        actions: [_profileButton(context), const SizedBox(width: 8)],
       ),
-      body: pages[currentIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: currentIndex,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: AppColors.primary,
-        unselectedItemColor: AppColors.mediumGray,
-        backgroundColor: AppColors.white,
-        onTap: changePage,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard_outlined),
-            activeIcon: Icon(Icons.dashboard),
-            label: 'Início',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.people_outline),
-            activeIcon: Icon(Icons.people),
-            label: 'Clientes',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.request_quote_outlined),
-            activeIcon: Icon(Icons.request_quote),
-            label: 'Orçamentos',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.inventory_2_outlined),
-            activeIcon: Icon(Icons.inventory_2),
-            label: 'Estoque',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.calendar_month_outlined),
-            activeIcon: Icon(Icons.calendar_month),
-            label: 'Agenda',
-          ),
-        ],
+      body: LayoutBuilder(
+        builder: (context, constraints) => ListView(
+          padding: EdgeInsets.all(constraints.maxWidth >= 700 ? 28 : 18),
+          children: [
+            _sectionHeader(context, 'Acesso rápido'),
+            const SizedBox(height: 10),
+            _quickActions(),
+            const SizedBox(height: 24),
+            _metrics(context, constraints.maxWidth, pending, approved,
+                today.length, lowStock.length),
+            const SizedBox(height: 26),
+            _sectionHeader(context, 'Agenda de hoje',
+                action: 'Ver agenda', onTap: () => onNavigate(4)),
+            const SizedBox(height: 10),
+            _todaySchedule(today),
+            const SizedBox(height: 26),
+            _sectionHeader(context, 'Atenção necessária',
+                action: lowStock.isEmpty ? null : 'Ver estoque',
+                onTap: lowStock.isEmpty ? null : () => onNavigate(3)),
+            const SizedBox(height: 10),
+            _attentionCard(lowStock, expiring),
+          ],
+        ),
       ),
     );
   }
-}
 
-class DashboardHomeContent extends StatelessWidget {
-  final VoidCallback onNovoOrcamento;
-  final VoidCallback onAbrirAgenda;
-
-  const DashboardHomeContent({
-    super.key,
-    required this.onNovoOrcamento,
-    required this.onAbrirAgenda,
-  });
-
-  ScheduleItem? getNextPendingSchedule() {
-    final pendingSchedules = AppData.schedules
-        .where((schedule) => schedule.status == 'A Fazer')
-        .toList();
-
-    if (pendingSchedules.isEmpty) {
-      return null;
-    }
-
-    return pendingSchedules.first;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ScheduleItem? nextSchedule = getNextPendingSchedule();
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Olá, serralheiro!',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.graphite,
-                ),
-          ),
-
-          const SizedBox(height: 6),
-
-          Text(
-            'Resumo das atividades da sua serralheria.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColors.darkGray,
-                ),
-          ),
-
-          const SizedBox(height: 24),
-
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 14,
-            mainAxisSpacing: 14,
-            childAspectRatio: 1.25,
-            children: [
-              SummaryCard(
-                title: 'Clientes',
-                value: AppData.clients.length.toString(),
-                icon: Icons.people_outline,
-              ),
-              SummaryCard(
-                title: 'Orçamentos',
-                value: AppData.budgets.length.toString(),
-                icon: Icons.request_quote_outlined,
-              ),
-              SummaryCard(
-                title: 'Itens',
-                value: AppData.materials.length.toString(),
-                icon: Icons.inventory_2_outlined,
-              ),
-              SummaryCard(
-                title: 'Alertas',
-                value: AppData.lowStockCount.toString(),
-                icon: Icons.warning_amber_outlined,
-                isAlert: true,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          ElevatedButton.icon(
-            onPressed: onNovoOrcamento,
-            icon: const Icon(Icons.add),
-            label: const Text('Novo Orçamento'),
-          ),
-
-          const SizedBox(height: 24),
-
-          Text(
-            'Próximo serviço',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.graphite,
-                ),
-          ),
-
-          const SizedBox(height: 12),
-
-          if (nextSchedule == null)
-            EmptyNextScheduleCard(
-              onAbrirAgenda: onAbrirAgenda,
-            )
-          else
-            NextScheduleCard(
-              schedule: nextSchedule,
-              onAbrirAgenda: onAbrirAgenda,
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class SummaryCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final IconData icon;
-  final bool isAlert;
-
-  const SummaryCard({
-    super.key,
-    required this.title,
-    required this.value,
-    required this.icon,
-    this.isAlert = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final Color color = isAlert ? AppColors.danger : AppColors.primary;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            icon,
-            color: color,
-            size: 30,
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.graphite,
-                ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColors.darkGray,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class NextScheduleCard extends StatelessWidget {
-  final ScheduleItem schedule;
-  final VoidCallback onAbrirAgenda;
-
-  const NextScheduleCard({
-    super.key,
-    required this.schedule,
-    required this.onAbrirAgenda,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.calendar_month_outlined,
-                  color: AppColors.primary,
-                ),
-              ),
-
-              const SizedBox(width: 14),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      schedule.serviceDescription,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.graphite,
-                          ),
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    Text(
-                      'Cliente: ${schedule.clientName}',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: AppColors.darkGray,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          Container(
-            padding: const EdgeInsets.all(14),
+  Widget _profileButton(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const ProfileScreen())),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
             decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(14),
+              color: AppColors.graphite.withValues(alpha: 0.045),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: AppColors.lightGray),
             ),
-            child: Column(
-              children: [
-                DashboardInfoLine(
-                  icon: Icons.calendar_today_outlined,
-                  label: 'Data',
-                  value: schedule.date,
-                ),
-                const SizedBox(height: 8),
-                DashboardInfoLine(
-                  icon: Icons.access_time_outlined,
-                  label: 'Horário',
-                  value: schedule.time,
-                ),
-                const SizedBox(height: 8),
-                DashboardInfoLine(
-                  icon: Icons.task_alt_outlined,
-                  label: 'Status',
-                  value: schedule.status,
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: onAbrirAgenda,
-              icon: const Icon(Icons.arrow_forward),
-              label: const Text('Ver agenda'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.primary,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              CompanyAvatar(
+                radius: 15,
+                logoBase64: AppData.companyProfile.logoBase64,
+                fallback: _initials(AppData.companyProfile.companyName),
               ),
-            ),
+              const SizedBox(width: 7),
+              const Text('Perfil',
+                  style: TextStyle(
+                      color: AppColors.graphite,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12)),
+            ]),
           ),
-        ],
+        ),
+      );
+
+  Widget _quickActions() => Row(children: [
+        _quickAction(Icons.request_quote_outlined, 'Orçamento', 2),
+        const SizedBox(width: 9),
+        _quickAction(Icons.person_add_alt_outlined, 'Cliente', 1),
+        const SizedBox(width: 9),
+        _quickAction(Icons.event_available_outlined, 'Agenda', 4),
+        const SizedBox(width: 9),
+        _quickAction(Icons.inventory_2_outlined, 'Estoque', 3),
+      ]);
+
+  Widget _quickAction(IconData icon, String label, int index) => Expanded(
+        child: InkWell(
+          onTap: () => onNavigate(index),
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 3),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.lightGray),
+            ),
+            child: Column(children: [
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.09),
+                    shape: BoxShape.circle),
+                child: Icon(icon, color: AppColors.primary, size: 21),
+              ),
+              const SizedBox(height: 7),
+              Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.fade,
+                  style: const TextStyle(
+                      fontSize: 10, fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ),
+      );
+
+  Widget _metrics(BuildContext context, double width, int pending,
+      double approved, int today, int lowStock) {
+    final metrics = [
+      _Metric('Pendentes', '$pending', Icons.pending_actions_outlined,
+          AppColors.warning, () => onNavigate(2)),
+      _Metric('Aprovado no mês', _currency(approved), Icons.trending_up,
+          AppColors.success, () => onNavigate(2)),
+      _Metric('Serviços hoje', '$today', Icons.today_outlined,
+          const Color(0xFF3568A8), () => onNavigate(4)),
+      _Metric('Estoque baixo', '$lowStock', Icons.warning_amber_outlined,
+          AppColors.danger, () => onNavigate(3)),
+    ];
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: metrics.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: width >= 900 ? 4 : 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: width >= 900 ? 1.65 : 1.3,
       ),
+      itemBuilder: (context, index) => _metricCard(context, metrics[index]),
     );
   }
-}
 
-class EmptyNextScheduleCard extends StatelessWidget {
-  final VoidCallback onAbrirAgenda;
+  Widget _metricCard(BuildContext context, _Metric item) => InkWell(
+        onTap: item.onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: AppCard(
+          padding: const EdgeInsets.all(16),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(item.icon, color: item.color, size: 25),
+            const Spacer(),
+            FittedBox(
+              child: Text(item.value,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800, color: AppColors.graphite)),
+            ),
+            Text(item.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 11.5, color: AppColors.darkGray)),
+          ]),
+        ),
+      );
 
-  const EmptyNextScheduleCard({
-    super.key,
-    required this.onAbrirAgenda,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
+  Widget _todaySchedule(List<ScheduleItem> items) {
+    if (items.isEmpty) {
+      return _emptyCard(
+          Icons.event_available_outlined, 'Nenhum serviço agendado para hoje.');
+    }
+    final visible = items.take(3).toList();
+    return AppCard(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
       child: Column(
-        children: [
-          const Icon(
-            Icons.event_available_outlined,
-            color: AppColors.primary,
-            size: 42,
-          ),
-
-          const SizedBox(height: 12),
-
-          Text(
-            'Nenhum serviço pendente',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.graphite,
-                ),
-          ),
-
-          const SizedBox(height: 6),
-
-          Text(
-            'Quando houver serviços com status "A Fazer", eles aparecerão aqui.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColors.darkGray,
-                ),
-          ),
-
-          const SizedBox(height: 12),
-
-          TextButton.icon(
-            onPressed: onAbrirAgenda,
-            icon: const Icon(Icons.add),
-            label: const Text('Abrir Agenda'),
-            style: TextButton.styleFrom(
-              foregroundColor: AppColors.primary,
+        children: visible.asMap().entries.map((entry) {
+          final item = entry.value;
+          return Column(children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              onTap: () => onNavigate(4),
+              leading: Container(
+                width: 52,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12)),
+                child: Text(item.time,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12)),
+              ),
+              title: Text(item.clientName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(item.serviceDescription,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+              trailing: const Icon(Icons.chevron_right),
             ),
-          ),
-        ],
+            if (entry.key < visible.length - 1) const Divider(height: 1),
+          ]);
+        }).toList(),
       ),
     );
   }
+
+  Widget _attentionCard(List<MaterialItem> lowStock, int expiring) {
+    if (lowStock.isEmpty && expiring == 0) {
+      return _emptyCard(Icons.check_circle_outline,
+          'Tudo certo. Nenhuma pendência importante agora.',
+          color: AppColors.success);
+    }
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(children: [
+        if (expiring > 0)
+          _alertRow(
+              Icons.schedule_outlined,
+              '$expiring orçamento${expiring == 1 ? '' : 's'} perto da validade',
+              AppColors.warning,
+              () => onNavigate(2)),
+        if (expiring > 0 && lowStock.isNotEmpty) const Divider(height: 20),
+        if (lowStock.isNotEmpty)
+          _alertRow(
+              Icons.inventory_2_outlined,
+              lowStock.length == 1
+                  ? '${lowStock.first.name} precisa de reposição'
+                  : '${lowStock.length} materiais precisam de reposição',
+              AppColors.danger,
+              () => onNavigate(3)),
+      ]),
+    );
+  }
+
+  Widget _alertRow(
+          IconData icon, String text, Color color, VoidCallback onTap) =>
+      InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+              child: Icon(icon, color: color, size: 21),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+            const Icon(Icons.chevron_right, color: AppColors.mediumGray),
+          ]),
+        ),
+      );
+
+  Widget _emptyCard(IconData icon, String text,
+          {Color color = AppColors.mediumGray}) =>
+      AppCard(
+        padding: const EdgeInsets.all(18),
+        child: Row(children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(text,
+                  style: const TextStyle(color: AppColors.darkGray))),
+        ]),
+      );
+
+  Widget _sectionHeader(BuildContext context, String title,
+          {String? action, VoidCallback? onTap}) =>
+      Row(children: [
+        Expanded(
+            child: Text(title,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700, color: AppColors.graphite))),
+        if (action != null) TextButton(onPressed: onTap, child: Text(action)),
+      ]);
+
+  String _currency(double value) =>
+      'R\$ ${value.toStringAsFixed(2).replaceAll('.', ',')}';
+
+  String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return '?';
+    return parts.length > 1
+        ? '${parts.first[0]}${parts[1][0]}'.toUpperCase()
+        : parts.first[0].toUpperCase();
+  }
 }
 
-class DashboardInfoLine extends StatelessWidget {
-  final IconData icon;
+class _Metric {
+  const _Metric(this.label, this.value, this.icon, this.color, this.onTap);
   final String label;
   final String value;
-
-  const DashboardInfoLine({
-    super.key,
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(
-          icon,
-          size: 18,
-          color: AppColors.primary,
-        ),
-        const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppColors.darkGray,
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColors.graphite,
-                ),
-          ),
-        ),
-      ],
-    );
-  }
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
 }

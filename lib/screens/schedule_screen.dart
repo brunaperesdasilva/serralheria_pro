@@ -1,677 +1,411 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_card.dart';
 import '../core/app_colors.dart';
+import '../core/widgets/app_state_view.dart';
+import '../core/widgets/app_dialogs.dart';
 import '../data/app_data.dart';
+import '../models/budget.dart';
 import '../models/client.dart';
 import '../models/schedule_item.dart';
 
+enum _PeriodFilter { all, today, week }
+
 class ScheduleScreen extends StatefulWidget {
-  const ScheduleScreen({super.key});
+  const ScheduleScreen({super.key, this.onBack});
+  final VoidCallback? onBack;
 
   @override
   State<ScheduleScreen> createState() => _ScheduleScreenState();
 }
 
 class _ScheduleScreenState extends State<ScheduleScreen> {
-    String twoDigits(int value) {
-    return value.toString().padLeft(2, '0');
-  }
+  _PeriodFilter _period = _PeriodFilter.all;
+  ScheduleStatus? _status;
 
-  Future<void> pickDate(TextEditingController controller) async {
-    final DateTime now = DateTime.now();
+  String _date(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+  String _time(TimeOfDay value) =>
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 
-    final DateTime? selectedDate = await showDatePicker(
-      context: context,
-      initialDate: now,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2035),
-    );
-
-    if (selectedDate != null) {
-      final String day = twoDigits(selectedDate.day);
-      final String month = twoDigits(selectedDate.month);
-      final String year = selectedDate.year.toString();
-
-      controller.text = '$day/$month/$year';
-    }
-  }
-
-  Future<void> pickTime(TextEditingController controller) async {
-    final TimeOfDay? selectedTime = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.now(),
-    );
-
-    if (selectedTime != null) {
-      final String hour = twoDigits(selectedTime.hour);
-      final String minute = twoDigits(selectedTime.minute);
-
-      controller.text = '$hour:$minute';
-    }
-  }
-
-  void openScheduleForm({ScheduleItem? schedule}) {
-    final bool isEditing = schedule != null;
-
-    Client? selectedClient;
-
-    if (isEditing) {
-      selectedClient = AppData.clients.firstWhere(
-        (client) => client.id == schedule.clientId,
-        orElse: () => AppData.clients.first,
-      );
-    }
-
-    final serviceController = TextEditingController(
-      text: schedule?.serviceDescription ?? '',
-    );
-
-    final dateController = TextEditingController(
-      text: schedule?.date ?? '',
-    );
-
-    final timeController = TextEditingController(
-      text: schedule?.time ?? '',
-    );
-
-    String selectedStatus = schedule?.status ?? 'A Fazer';
-
+  Future<void> _openForm({ScheduleItem? item}) async {
     if (AppData.clients.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Cadastre um cliente antes de criar um agendamento.'),
-        ),
-      );
+      _message('Cadastre um cliente antes de criar um agendamento.');
       return;
     }
+    final editing = item != null;
+    Client selectedClient = AppData.clients.firstWhere(
+      (value) => value.id == item?.clientId || value.name == item?.clientName,
+      orElse: () => AppData.clients.first,
+    );
+    Budget? selectedBudget = AppData.budgets
+        .where((value) => value.id == item?.budgetId)
+        .firstOrNull;
+    var selectedDate = item?.scheduledAt ?? DateTime.now();
+    var selectedTime = TimeOfDay.fromDateTime(selectedDate);
+    var status = item?.status ?? ScheduleStatus.scheduled;
+    final service = TextEditingController(text: item?.serviceDescription ?? '');
+    final address = TextEditingController(
+        text: item?.address.isNotEmpty == true
+            ? item!.address
+            : selectedClient.address);
+    final notes = TextEditingController(text: item?.notes ?? '');
 
-    showModalBottomSheet(
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(24),
-        ),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                left: 20,
-                right: 20,
-                top: 24,
-                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+              20, 24, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(editing ? 'Editar / reagendar' : 'Novo agendamento',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 18),
+              DropdownButtonFormField<Client>(
+                initialValue: selectedClient,
+                decoration: const InputDecoration(labelText: 'Cliente'),
+                items: AppData.clients
+                    .map((client) => DropdownMenuItem(
+                        value: client, child: Text(client.name)))
+                    .toList(),
+                onChanged: (client) {
+                  if (client == null) return;
+                  setModalState(() {
+                    selectedClient = client;
+                    selectedBudget = null;
+                    if (address.text.trim().isEmpty) {
+                      address.text = client.address;
+                    }
+                  });
+                },
               ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      isEditing ? 'Editar Agendamento' : 'Novo Agendamento',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.graphite,
-                          ),
-                    ),
-                    const SizedBox(height: 20),
-                    DropdownButtonFormField<Client>(
-                      value: selectedClient,
-                      decoration: const InputDecoration(
-                        labelText: 'Cliente',
-                        prefixIcon: Icon(Icons.person_outline),
-                      ),
-                      items: AppData.clients.map((client) {
-                        return DropdownMenuItem<Client>(
-                          value: client,
-                          child: Text(client.name),
-                        );
-                      }).toList(),
-                      onChanged: (client) {
-                        setModalState(() {
-                          selectedClient = client;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: serviceController,
-                      decoration: const InputDecoration(
-                        labelText: 'Descrição do serviço',
-                        prefixIcon: Icon(Icons.build_outlined),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: dateController,
-                      readOnly: true,
-                      onTap: () {
-                        pickDate(dateController);
-                      },
-                      decoration: const InputDecoration(
-                        labelText: 'Data',
-                        hintText: 'Selecione a data',
-                        prefixIcon: Icon(Icons.calendar_month_outlined),
-                        suffixIcon: Icon(Icons.arrow_drop_down),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                    controller: timeController,
-                    readOnly: true,
-                    onTap: () {
-                      pickTime(timeController);
+              const SizedBox(height: 12),
+              DropdownButtonFormField<Budget?>(
+                initialValue: selectedBudget,
+                decoration:
+                    const InputDecoration(labelText: 'Orçamento (opcional)'),
+                items: [
+                  const DropdownMenuItem<Budget?>(
+                      value: null, child: Text('Sem orçamento')),
+                  ...AppData.budgets
+                      .where((budget) =>
+                          budget.clientId == selectedClient.id ||
+                          budget.clientName == selectedClient.name)
+                      .map((budget) => DropdownMenuItem<Budget?>(
+                          value: budget,
+                          child:
+                              Text('#${budget.id} - ${budget.status.label}'))),
+                ],
+                onChanged: (budget) {
+                  selectedBudget = budget;
+                  if (budget != null) {
+                    service.text = budget.serviceDescription;
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                  controller: service,
+                  decoration: const InputDecoration(
+                      labelText: 'Serviço / compromisso')),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Data'),
+                    subtitle: Text(_date(selectedDate)),
+                    trailing: const Icon(Icons.calendar_month),
+                    onTap: () async {
+                      final value = await showDatePicker(
+                        context: context,
+                        initialDate: selectedDate,
+                        firstDate: DateTime(2020),
+                        lastDate:
+                            DateTime.now().add(const Duration(days: 1825)),
+                      );
+                      if (value != null) {
+                        setModalState(() => selectedDate = value);
+                      }
                     },
-                    decoration: const InputDecoration(
-                      labelText: 'Horário',
-                      hintText: 'Selecione o horário',
-                      prefixIcon: Icon(Icons.access_time_outlined),
-                      suffixIcon: Icon(Icons.arrow_drop_down),
-                    ),
                   ),
-                    const SizedBox(height: 14),
-                    DropdownButtonFormField<String>(
-                      value: selectedStatus,
-                      decoration: const InputDecoration(
-                        labelText: 'Status',
-                        prefixIcon: Icon(Icons.task_alt_outlined),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'A Fazer',
-                          child: Text('A Fazer'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Concluído',
-                          child: Text('Concluído'),
-                        ),
-                      ],
-                      onChanged: (status) {
-                        setModalState(() {
-                          selectedStatus = status ?? 'A Fazer';
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () {
-                        final client = selectedClient;
-                        final service = serviceController.text.trim();
-                        final date = dateController.text.trim();
-                        final time = timeController.text.trim();
-
-                        if (client == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Selecione um cliente.'),
-                            ),
-                          );
-                          return;
-                        }
-
-                        if (service.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Informe a descrição do serviço.'),
-                            ),
-                          );
-                          return;
-                        }
-
-                        if (date.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Informe a data do serviço.'),
-                            ),
-                          );
-                          return;
-                        }
-
-                        if (time.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Informe o horário do serviço.'),
-                            ),
-                          );
-                          return;
-                        }
-
-                        setState(() {
-                          if (isEditing) {
-                            schedule.clientId = client.id;
-                            schedule.clientName = client.name;
-                            schedule.serviceDescription = service;
-                            schedule.date = date;
-                            schedule.time = time;
-                            schedule.status = selectedStatus;
-                          } else {
-                            AppData.schedules.add(
-                              ScheduleItem(
-                                id: AppData.nextScheduleId,
-                                clientId: client.id,
-                                clientName: client.name,
-                                serviceDescription: service,
-                                date: date,
-                                time: time,
-                                status: selectedStatus,
-                              ),
-                            );
-
-                            AppData.nextScheduleId++;
-                          }
-                        });
-
-                        Navigator.pop(context);
-
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              isEditing
-                                  ? 'Agendamento atualizado com sucesso!'
-                                  : 'Agendamento cadastrado com sucesso!',
-                            ),
-                          ),
-                        );
-                      },
-                      child: Text(
-                        isEditing
-                            ? 'Salvar Alterações'
-                            : 'Cadastrar Agendamento',
-                      ),
-                    ),
-                  ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Horário'),
+                    subtitle: Text(_time(selectedTime)),
+                    trailing: const Icon(Icons.schedule),
+                    onTap: () async {
+                      final value = await showTimePicker(
+                          context: context, initialTime: selectedTime);
+                      if (value != null) {
+                        setModalState(() => selectedTime = value);
+                      }
+                    },
+                  ),
+                ),
+              ]),
+              DropdownButtonFormField<ScheduleStatus>(
+                initialValue: status,
+                decoration: const InputDecoration(labelText: 'Estado'),
+                items: ScheduleStatus.values
+                    .map((value) => DropdownMenuItem(
+                        value: value, child: Text(value.label)))
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) status = value;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                  controller: address,
+                  decoration: const InputDecoration(
+                      labelText: 'Endereço do serviço',
+                      prefixIcon: Icon(Icons.location_on_outlined))),
+              const SizedBox(height: 12),
+              TextField(
+                  controller: notes,
+                  maxLines: 3,
+                  decoration: const InputDecoration(labelText: 'Observações')),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    if (service.text.trim().isEmpty) {
+                      _message('Informe o serviço ou compromisso.');
+                      return;
+                    }
+                    final value = ScheduleItem(
+                      id: item?.id,
+                      clientId: selectedClient.id,
+                      clientName: selectedClient.name,
+                      serviceDescription: service.text.trim(),
+                      date: _date(selectedDate),
+                      time: _time(selectedTime),
+                      status: status,
+                      address: address.text.trim(),
+                      notes: notes.text.trim(),
+                      budgetId: selectedBudget?.id,
+                    );
+                    if (editing) {
+                      await AppData.updateSchedule(value);
+                    } else {
+                      await AppData.addSchedule(value);
+                    }
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                  },
+                  child: Text(editing ? 'Salvar alterações' : 'Agendar'),
                 ),
               ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void toggleStatus(ScheduleItem schedule) {
-    setState(() {
-      if (schedule.status == 'A Fazer') {
-        schedule.status = 'Concluído';
-      } else {
-        schedule.status = 'A Fazer';
-      }
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          schedule.status == 'Concluído'
-              ? 'Serviço marcado como concluído.'
-              : 'Serviço marcado como a fazer.',
+            ]),
+          ),
         ),
       ),
     );
+    service.dispose();
+    address.dispose();
+    notes.dispose();
   }
 
-  void confirmDelete(ScheduleItem schedule) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Excluir agendamento'),
-          content: Text(
-            'Deseja realmente excluir o agendamento "${schedule.serviceDescription}"?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              child: const Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  AppData.schedules.removeWhere(
-                    (item) => item.id == schedule.id,
-                  );
-                });
+  Future<void> _changeStatus(ScheduleItem item, ScheduleStatus status) async {
+    await AppData.updateSchedule(ScheduleItem(
+      id: item.id,
+      clientId: item.clientId,
+      clientName: item.clientName,
+      serviceDescription: item.serviceDescription,
+      date: item.date,
+      time: item.time,
+      status: status,
+      address: item.address,
+      notes: item.notes,
+      budgetId: item.budgetId,
+    ));
+  }
 
-                Navigator.pop(context);
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Agendamento excluído com sucesso!'),
-                  ),
-                );
-              },
-              child: const Text(
-                'Excluir',
-                style: TextStyle(
-                  color: AppColors.danger,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+  Future<void> _confirmDelete(ScheduleItem item) async {
+    final confirmed = await AppDialogs.confirmDelete(
+      context,
+      title: 'Excluir agendamento',
+      message: 'Excluir o compromisso de ${item.clientName}?',
     );
+    if (confirmed) await AppData.deleteSchedule(item.id!);
   }
+
+  bool _matchesPeriod(ScheduleItem item) {
+    final scheduledAt = item.scheduledAt;
+    if (scheduledAt == null || _period == _PeriodFilter.all) return true;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(scheduledAt.year, scheduledAt.month, scheduledAt.day);
+    if (_period == _PeriodFilter.today) return day == today;
+    final weekStart = today.subtract(Duration(days: today.weekday - 1));
+    return !day.isBefore(weekStart) &&
+        day.isBefore(weekStart.add(const Duration(days: 7)));
+  }
+
+  void _message(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
   @override
   Widget build(BuildContext context) {
-    final schedules = AppData.schedules;
+    final items = AppData.schedules
+        .where((item) =>
+            _matchesPeriod(item) && (_status == null || item.status == _status))
+        .toList()
+      ..sort((a, b) {
+        final aDate = a.scheduledAt ?? DateTime(2100);
+        final bDate = b.scheduledAt ?? DateTime(2100);
+        return aDate.compareTo(bDate);
+      });
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: schedules.isEmpty
-          ? EmptyScheduleView(
-              onAddSchedule: () {
-                openScheduleForm();
-              },
+      appBar: AppBar(
+        leading: widget.onBack == null
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.arrow_back), onPressed: widget.onBack),
+        title: const Text('Agenda'),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openForm,
+        icon: const Icon(Icons.add),
+        label: const Text('Agendar'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 90),
+        children: [
+          SegmentedButton<_PeriodFilter>(
+            segments: const [
+              ButtonSegment(value: _PeriodFilter.all, label: Text('Todos')),
+              ButtonSegment(value: _PeriodFilter.today, label: Text('Hoje')),
+              ButtonSegment(value: _PeriodFilter.week, label: Text('Semana')),
+            ],
+            selected: {_period},
+            onSelectionChanged: (value) =>
+                setState(() => _period = value.first),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<ScheduleStatus?>(
+            initialValue: _status,
+            decoration: const InputDecoration(labelText: 'Filtrar por estado'),
+            items: [
+              const DropdownMenuItem<ScheduleStatus?>(
+                  value: null, child: Text('Todos os estados')),
+              ...ScheduleStatus.values.map((value) =>
+                  DropdownMenuItem<ScheduleStatus?>(
+                      value: value, child: Text(value.label))),
+            ],
+            onChanged: (value) => setState(() => _status = value),
+          ),
+          const SizedBox(height: 18),
+          if (items.isEmpty)
+            SizedBox(
+              height: 320,
+              child: AppStateView.empty(
+                title: 'Nenhum compromisso encontrado',
+                message: 'Altere os filtros ou crie um novo agendamento.',
+                actionLabel: 'Novo agendamento',
+                onAction: _openForm,
+              ),
             )
-          : ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () {
-                    openScheduleForm();
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('Novo Agendamento'),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Agendamentos cadastrados',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.graphite,
-                      ),
-                ),
-                const SizedBox(height: 12),
-                ...schedules.map((schedule) {
-                  return ScheduleCard(
-                    schedule: schedule,
-                    onEdit: () {
-                      openScheduleForm(schedule: schedule);
-                    },
-                    onDelete: () {
-                      confirmDelete(schedule);
-                    },
-                    onToggleStatus: () {
-                      toggleStatus(schedule);
-                    },
-                  );
-                }),
-              ],
-            ),
+          else
+            ...items.map((item) => ScheduleCard(
+                  item: item,
+                  onEdit: () => _openForm(item: item),
+                  onDelete: () => _confirmDelete(item),
+                  onStatusChanged: (status) => _changeStatus(item, status),
+                )),
+        ],
+      ),
     );
   }
 }
 
 class ScheduleCard extends StatelessWidget {
-  final ScheduleItem schedule;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  final VoidCallback onToggleStatus;
-
   const ScheduleCard({
     super.key,
-    required this.schedule,
+    required this.item,
     required this.onEdit,
     required this.onDelete,
-    required this.onToggleStatus,
+    required this.onStatusChanged,
   });
+
+  final ScheduleItem item;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final ValueChanged<ScheduleStatus> onStatusChanged;
 
   @override
   Widget build(BuildContext context) {
-    final bool concluido = schedule.status == 'Concluído';
-
-    return Container(
+    final color = switch (item.status) {
+      ScheduleStatus.scheduled => Colors.blue,
+      ScheduleStatus.inProgress => Colors.orange,
+      ScheduleStatus.completed => Colors.green,
+      ScheduleStatus.cancelled => Colors.grey,
+    };
+    return AppCard(
       margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          CircleAvatar(
+            backgroundColor: color.withValues(alpha: .12),
+            child: Icon(Icons.calendar_month_outlined, color: color),
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircleAvatar(
-                backgroundColor:
-                    concluido ? AppColors.success : AppColors.primary,
-                child: Icon(
-                  concluido
-                      ? Icons.check_circle_outline
-                      : Icons.calendar_month_outlined,
-                  color: AppColors.white,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      schedule.serviceDescription,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.graphite,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Cliente: ${schedule.clientName}',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: AppColors.darkGray,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-              PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'editar') {
-                    onEdit();
-                  }
-
-                  if (value == 'excluir') {
-                    onDelete();
-                  }
-                },
-                itemBuilder: (context) {
-                  return const [
-                    PopupMenuItem(
-                      value: 'editar',
-                      child: Text('Editar'),
-                    ),
-                    PopupMenuItem(
-                      value: 'excluir',
-                      child: Text('Excluir'),
-                    ),
-                  ];
-                },
-              ),
-            ],
+          const SizedBox(width: 12),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(item.clientName,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(item.serviceDescription,
+                  maxLines: 2, overflow: TextOverflow.ellipsis),
+            ]),
           ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              children: [
-                ScheduleInfoLine(
-                  icon: Icons.calendar_month_outlined,
-                  label: 'Data',
-                  value: schedule.date,
-                ),
-                const SizedBox(height: 8),
-                ScheduleInfoLine(
-                  icon: Icons.access_time_outlined,
-                  label: 'Horário',
-                  value: schedule.time,
-                ),
-              ],
-            ),
+          PopupMenuButton<ScheduleStatus>(
+            initialValue: item.status,
+            onSelected: onStatusChanged,
+            itemBuilder: (context) => ScheduleStatus.values
+                .map((value) =>
+                    PopupMenuItem(value: value, child: Text(value.label)))
+                .toList(),
+            child: Chip(
+                label: Text(item.status.label),
+                backgroundColor: color.withValues(alpha: .12)),
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: concluido
-                      ? AppColors.success.withOpacity(0.12)
-                      : AppColors.warning.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  schedule.status,
-                  style: TextStyle(
-                    color: concluido ? AppColors.success : AppColors.warning,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: onToggleStatus,
-                icon: Icon(
-                  concluido ? Icons.undo_outlined : Icons.check_circle_outline,
-                  size: 18,
-                ),
-                label: Text(
-                  concluido ? 'Reabrir' : 'Concluir',
-                ),
-                style: TextButton.styleFrom(
-                  foregroundColor:
-                      concluido ? AppColors.darkGray : AppColors.success,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+        ]),
+        const SizedBox(height: 10),
+        _line(Icons.schedule, '${item.date} às ${item.time}'),
+        if (item.address.isNotEmpty)
+          _line(Icons.location_on_outlined, item.address),
+        if (item.notes.isNotEmpty) _line(Icons.notes, item.notes),
+        if (item.budgetId != null)
+          _line(Icons.request_quote_outlined, 'Orçamento #${item.budgetId}'),
+        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          TextButton.icon(
+              onPressed: onEdit,
+              icon: const Icon(Icons.event_repeat),
+              label: const Text('Editar / reagendar')),
+          IconButton(
+              onPressed: onDelete,
+              tooltip: 'Excluir',
+              icon: const Icon(Icons.delete_outline, color: AppColors.danger)),
+        ]),
+      ]),
     );
   }
-}
 
-class ScheduleInfoLine extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-
-  const ScheduleInfoLine({
-    super.key,
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(
-          icon,
-          size: 18,
-          color: AppColors.primary,
-        ),
-        const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppColors.darkGray,
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColors.graphite,
-                ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class EmptyScheduleView extends StatelessWidget {
-  final VoidCallback onAddSchedule;
-
-  const EmptyScheduleView({
-    super.key,
-    required this.onAddSchedule,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(22),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 12,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.calendar_month_outlined,
-                size: 56,
-                color: AppColors.primary,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Nenhum agendamento cadastrado',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.graphite,
-                    ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Cadastre serviços para organizar sua agenda de trabalho.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: AppColors.darkGray,
-                    ),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: onAddSchedule,
-                icon: const Icon(Icons.add),
-                label: const Text('Cadastrar Agendamento'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget _line(IconData icon, String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 5),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, size: 17, color: AppColors.darkGray),
+          const SizedBox(width: 7),
+          Expanded(child: Text(text)),
+        ]),
+      );
 }

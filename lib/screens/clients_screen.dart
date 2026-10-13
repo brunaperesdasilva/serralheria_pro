@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_card.dart';
 import '../core/app_colors.dart';
+import '../core/widgets/app_dialogs.dart';
 import '../data/app_data.dart';
 import '../models/client.dart';
 
 class ClientsScreen extends StatefulWidget {
-  const ClientsScreen({super.key});
+  final VoidCallback? onBack;
+
+  const ClientsScreen({super.key, this.onBack});
 
   @override
   State<ClientsScreen> createState() => _ClientsScreenState();
@@ -17,7 +21,8 @@ class _ClientsScreenState extends State<ClientsScreen> {
 
     final nameController = TextEditingController(text: client?.name ?? '');
     final phoneController = TextEditingController(text: client?.phone ?? '');
-    final addressController = TextEditingController(text: client?.address ?? '');
+    final addressController =
+        TextEditingController(text: client?.address ?? '');
     final emailController = TextEditingController(text: client?.email ?? '');
 
     showModalBottomSheet(
@@ -49,9 +54,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                         color: AppColors.graphite,
                       ),
                 ),
-
                 const SizedBox(height: 20),
-
                 TextField(
                   controller: nameController,
                   decoration: const InputDecoration(
@@ -59,9 +62,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                     prefixIcon: Icon(Icons.person_outline),
                   ),
                 ),
-
                 const SizedBox(height: 14),
-
                 TextField(
                   controller: phoneController,
                   keyboardType: TextInputType.phone,
@@ -70,9 +71,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                     prefixIcon: Icon(Icons.phone_outlined),
                   ),
                 ),
-
                 const SizedBox(height: 14),
-
                 TextField(
                   controller: addressController,
                   decoration: const InputDecoration(
@@ -80,9 +79,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                     prefixIcon: Icon(Icons.location_on_outlined),
                   ),
                 ),
-
                 const SizedBox(height: 14),
-
                 TextField(
                   controller: emailController,
                   keyboardType: TextInputType.emailAddress,
@@ -91,11 +88,9 @@ class _ClientsScreenState extends State<ClientsScreen> {
                     prefixIcon: Icon(Icons.email_outlined),
                   ),
                 ),
-
                 const SizedBox(height: 24),
-
                 ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
                     final name = nameController.text.trim();
                     final phone = phoneController.text.trim();
                     final address = addressController.text.trim();
@@ -110,26 +105,27 @@ class _ClientsScreenState extends State<ClientsScreen> {
                       return;
                     }
 
-                    setState(() {
-                      if (isEditing) {
-                        client.name = name;
-                        client.phone = phone;
-                        client.address = address;
-                        client.email = email;
-                      } else {
-                        AppData.clients.add(
-                          Client(
-                            id: AppData.nextClientId,
-                            name: name,
-                            phone: phone,
-                            address: address,
-                            email: email,
-                          ),
-                        );
+                    if (isEditing) {
+                      client.name = name;
+                      client.phone = phone;
+                      client.address = address;
+                      client.email = email;
 
-                        AppData.nextClientId++;
-                      }
-                    });
+                      await AppData.updateClient(client);
+                    } else {
+                      await AppData.addClient(
+                        Client(
+                          name: name,
+                          phone: phone,
+                          address: address,
+                          email: email,
+                        ),
+                      );
+                    }
+
+                    if (!context.mounted) return;
+
+                    setState(() {});
 
                     Navigator.pop(context);
 
@@ -143,7 +139,8 @@ class _ClientsScreenState extends State<ClientsScreen> {
                       ),
                     );
                   },
-                  child: Text(isEditing ? 'Salvar Alterações' : 'Cadastrar Cliente'),
+                  child: Text(
+                      isEditing ? 'Salvar Alterações' : 'Cadastrar Cliente'),
                 ),
               ],
             ),
@@ -153,47 +150,52 @@ class _ClientsScreenState extends State<ClientsScreen> {
     );
   }
 
-  void confirmDelete(Client client) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Excluir cliente'),
-          content: Text('Deseja realmente excluir ${client.name}?'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              child: const Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  AppData.clients.removeWhere((item) => item.id == client.id);
-                });
-
-                Navigator.pop(context);
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Cliente excluído com sucesso!'),
-                  ),
-                );
-              },
-              child: const Text(
-                'Excluir',
-                style: TextStyle(
-                  color: AppColors.danger,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+  Future<void> confirmDelete(Client client) async {
+    final id = client.id;
+    if (id == null) {
+      _message('Este cliente ainda não foi sincronizado. Tente novamente.');
+      return;
+    }
+    final confirmed = await AppDialogs.confirmDelete(
+      context,
+      title: 'Excluir cliente',
+      message:
+          'Deseja realmente excluir ${client.name}? Os orçamentos e agendamentos existentes serão mantidos.',
     );
+    if (!confirmed || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(const SnackBar(
+      duration: Duration(seconds: 30),
+      content: Row(children: [
+        SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        SizedBox(width: 12),
+        Text('Excluindo cliente...'),
+      ]),
+    ));
+
+    try {
+      await AppData.deleteClient(id);
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      setState(() {});
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Cliente excluído com sucesso!')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      _message('Não foi possível excluir o cliente. Verifique a conexão.');
+    }
   }
+
+  void _message(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
   @override
   Widget build(BuildContext context) {
@@ -201,6 +203,17 @@ class _ClientsScreenState extends State<ClientsScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
+      // AppBar adicionada conforme solicitado
+      appBar: AppBar(
+        leading: widget.onBack == null
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Voltar',
+                onPressed: widget.onBack,
+              ),
+        title: const Text('Clientes'),
+      ),
       body: clients.isEmpty
           ? EmptyClientsView(
               onAddClient: () {
@@ -210,16 +223,20 @@ class _ClientsScreenState extends State<ClientsScreen> {
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                ElevatedButton.icon(
-                  onPressed: () {
-                    openClientForm();
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('Novo Cliente'),
+                Align(
+                  alignment: Alignment.center,
+                  child: SizedBox(
+                    width: 220,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        openClientForm();
+                      },
+                      icon: const Icon(Icons.add),
+                      label: const Text('Novo Cliente'),
+                    ),
+                  ),
                 ),
-
-                const SizedBox(height: 20),
-
+                const SizedBox(height: 24),
                 Text(
                   'Clientes cadastrados',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -227,9 +244,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                         color: AppColors.graphite,
                       ),
                 ),
-
-                const SizedBox(height: 12),
-
+                const SizedBox(height: 16),
                 ...clients.map((client) {
                   return ClientCard(
                     client: client,
@@ -261,33 +276,22 @@ class ClientCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
+    return AppCard(
+      margin: const EdgeInsets.only(bottom: 16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const CircleAvatar(
-            backgroundColor: AppColors.primary,
-            child: Icon(
-              Icons.person,
-              color: AppColors.white,
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: CircleAvatar(
+              backgroundColor: AppColors.primary,
+              child: Icon(
+                Icons.person,
+                color: AppColors.white,
+              ),
             ),
           ),
-
-          const SizedBox(width: 14),
-
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -299,20 +303,18 @@ class ClientCard extends StatelessWidget {
                         color: AppColors.graphite,
                       ),
                 ),
-
-                const SizedBox(height: 6),
-
+                const SizedBox(height: 12),
                 InfoLine(
                   icon: Icons.phone_outlined,
                   text: client.phone,
                 ),
-
+                if (client.address.isNotEmpty) const SizedBox(height: 8),
                 if (client.address.isNotEmpty)
                   InfoLine(
                     icon: Icons.location_on_outlined,
                     text: client.address,
                   ),
-
+                if (client.email.isNotEmpty) const SizedBox(height: 8),
                 if (client.email.isNotEmpty)
                   InfoLine(
                     icon: Icons.email_outlined,
@@ -321,24 +323,31 @@ class ClientCard extends StatelessWidget {
               ],
             ),
           ),
-
-          Column(
-            children: [
-              IconButton(
-                onPressed: onEdit,
-                icon: const Icon(
-                  Icons.edit_outlined,
-                  color: AppColors.primary,
+          const SizedBox(width: 6),
+          Padding(
+            padding: const EdgeInsets.only(top: 22),
+            child: Column(
+              children: [
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onEdit,
+                  icon: const Icon(
+                    Icons.edit_outlined,
+                    color: AppColors.primary,
+                  ),
+                  tooltip: 'Editar',
                 ),
-              ),
-              IconButton(
-                onPressed: onDelete,
-                icon: const Icon(
-                  Icons.delete_outline,
-                  color: AppColors.danger,
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onDelete,
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: AppColors.danger,
+                  ),
+                  tooltip: 'Excluir',
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -358,26 +367,30 @@ class InfoLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 3),
-      child: Row(
-        children: [
-          Icon(
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(
             icon,
             size: 16,
             color: AppColors.darkGray,
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              text,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.darkGray,
-                  ),
-            ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.visible,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.darkGray,
+                  height: 1.4,
+                ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -395,57 +408,40 @@ class EmptyClientsView extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: AppColors.white,
-            borderRadius: BorderRadius.circular(22),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 12,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.people_outline,
-                size: 56,
-                color: AppColors.primary,
-              ),
-
-              const SizedBox(height: 16),
-
-              Text(
-                'Nenhum cliente cadastrado',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.graphite,
-                    ),
-              ),
-
-              const SizedBox(height: 8),
-
-              Text(
-                'Cadastre seu primeiro cliente para começar a organizar seus serviços.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: AppColors.darkGray,
-                    ),
-              ),
-
-              const SizedBox(height: 20),
-
-              ElevatedButton.icon(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.people_outline,
+              size: 56,
+              color: AppColors.darkGray,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Nenhum cliente cadastrado',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.graphite,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Cadastre seu primeiro cliente para começar a organizar seus serviços.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.darkGray,
+                  ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: 220,
+              child: ElevatedButton.icon(
                 onPressed: onAddClient,
                 icon: const Icon(Icons.add),
                 label: const Text('Cadastrar Cliente'),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

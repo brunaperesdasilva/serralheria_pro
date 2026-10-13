@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "625720273125",
+    "project_id": "serralheria-pro",
+    "storage_bucket": "serralheria-pro.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:625720273125:android:36c544a6d08c60be258c0c",
+        "android_client_info": {
+          "package_name": "com.serralheriapro.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYcHs9z4CdWPga2gKYGK5PHK8vwRRo-PU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

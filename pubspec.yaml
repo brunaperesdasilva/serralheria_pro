@@ -11,10 +11,22 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
 
   google_fonts: ^6.2.1
-
   cupertino_icons: ^1.0.8
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  url_launcher: ^6.2.1
+  firebase_core: ^4.14.0
+  firebase_auth: ^6.6.1
+  cloud_firestore: ^6.9.0
+  pdf: ^3.13.0
+  printing: ^5.15.0
+  share_plus: ^13.3.0
+  image_picker: ^1.1.2
+
 
 dev_dependencies:
   flutter_test:
@@ -22,6 +34,7 @@ dev_dependencies:
 
   flutter_lints: ^5.0.0
   flutter_native_splash: ^2.4.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
@@ -34,3 +47,11 @@ flutter_native_splash:
   image: assets/images/logo.png
   android: true
   ios: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  image_path: assets/images/logo.png
+  adaptive_icon_background: "#7A0E0E"
+  adaptive_icon_foreground: assets/images/logo.png

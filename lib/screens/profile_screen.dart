@@ -1,7 +1,15 @@
-import 'package:flutter/material.dart';
+import 'dart:convert';
 
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:serralheria_pro/models/company_profile.dart';
+
+import '../core/app_card.dart';
+import '../core/app_auth.dart';
 import '../core/app_colors.dart';
+import '../core/widgets/company_avatar.dart';
 import '../data/app_data.dart';
+import '../data/cloud_data_bootstrap.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -12,11 +20,14 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final TextEditingController companyNameController = TextEditingController();
-  final TextEditingController responsibleNameController = TextEditingController();
+  final TextEditingController responsibleNameController =
+      TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
+  final TextEditingController cnpjController = TextEditingController();
 
   bool isEditing = false;
+  String? _logoBase64;
 
   @override
   void initState() {
@@ -29,6 +40,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     responsibleNameController.text = AppData.companyProfile.responsibleName;
     phoneController.text = AppData.companyProfile.phone;
     emailController.text = AppData.companyProfile.email;
+    cnpjController.text = AppData.companyProfile.cnpj;
+    _logoBase64 = AppData.companyProfile.logoBase64;
   }
 
   @override
@@ -37,14 +50,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     responsibleNameController.dispose();
     phoneController.dispose();
     emailController.dispose();
+    cnpjController.dispose();
     super.dispose();
   }
 
-  void saveProfile() {
+  void saveProfile() async {
     final companyName = companyNameController.text.trim();
     final responsibleName = responsibleNameController.text.trim();
     final phone = phoneController.text.trim();
     final email = emailController.text.trim();
+    final cnpj = cnpjController.text.trim();
 
     if (companyName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -53,11 +68,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return;
     }
 
+    final newProfile = CompanyProfile(
+      id: AppData.companyProfile.id,
+      companyName: companyName,
+      responsibleName: responsibleName,
+      phone: phone,
+      email: email,
+      cnpj: cnpj,
+      logoBase64: _logoBase64,
+    );
+
+    await AppData.saveProfile(newProfile);
+
+    if (!mounted) return;
     setState(() {
-      AppData.companyProfile.companyName = companyName;
-      AppData.companyProfile.responsibleName = responsibleName;
-      AppData.companyProfile.phone = phone;
-      AppData.companyProfile.email = email;
       isEditing = false;
     });
 
@@ -66,7 +90,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // Função para gerar as iniciais do nome
   String getInitials(String name) {
     if (name.isEmpty) return '?';
     List<String> names = name.split(' ');
@@ -76,6 +99,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return name[0].toUpperCase();
   }
 
+  Future<void> _pickLogo() async {
+    final image = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 75,
+      maxWidth: 900,
+      maxHeight: 900,
+    );
+    if (image == null) return;
+    final bytes = await image.readAsBytes();
+    if (bytes.length > 700000) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Escolha uma imagem menor que 700 KB.'),
+      ));
+      return;
+    }
+    setState(() => _logoBase64 = base64Encode(bytes));
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = AppData.companyProfile;
@@ -83,8 +125,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Voltar',
+          onPressed: () {
+            Navigator.pop(context);
+          },
+        ),
         title: const Text('Perfil'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sair',
+            onPressed: () async {
+              CloudDataBootstrap.reset();
+              await AppAuth.repository.signOut();
+              if (!context.mounted) return;
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            },
+          ),
           if (!isEditing)
             IconButton(
               icon: const Icon(Icons.edit),
@@ -111,74 +170,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          // Card do topo com Logo dinâmica
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-              color: AppColors.white,
-              borderRadius: BorderRadius.circular(22),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
+          AppCard(
             child: Column(
               children: [
-                // Área da Logo (Agora dinâmica)
-                GestureDetector(
-                  onTap: isEditing
-                      ? () {
-                          // Simula a ação de trocar foto
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Upload de imagem será implementado na próxima fase.',
-                              ),
-                            ),
-                          );
-                        }
-                      : null,
-                  child: Stack(
+                CompanyAvatar(
+                  logoBase64: _logoBase64,
+                  fallback: getInitials(profile.companyName),
+                ),
+                if (isEditing) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
                     children: [
-                      CircleAvatar(
-                        radius: 50,
-                        backgroundColor: AppColors.primary.withOpacity(0.1),
-                        child: Text(
-                          getInitials(profile.companyName),
-                          style: const TextStyle(
-                            fontSize: 36,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primary,
-                          ),
-                        ),
+                      TextButton.icon(
+                        onPressed: _pickLogo,
+                        icon: const Icon(Icons.add_photo_alternate_outlined),
+                        label: Text(_logoBase64 == null
+                            ? 'Adicionar logotipo'
+                            : 'Trocar logotipo'),
                       ),
-                      if (isEditing)
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: const BoxDecoration(
-                              color: AppColors.primary,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.camera_alt,
-                              color: AppColors.white,
-                              size: 18,
-                            ),
-                          ),
+                      if (_logoBase64 != null)
+                        TextButton.icon(
+                          onPressed: () => setState(() => _logoBase64 = null),
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('Remover'),
                         ),
                     ],
                   ),
-                ),
-
+                ],
                 const SizedBox(height: 18),
-
                 Text(
                   profile.companyName,
                   textAlign: TextAlign.center,
@@ -198,50 +219,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ],
             ),
           ),
-
           const SizedBox(height: 24),
-
-          // Área de Informações
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: AppColors.white,
-              borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 5),
-                ),
-              ],
-            ),
+          AppCard(
             child: isEditing ? _buildEditMode() : _buildViewMode(),
           ),
-
           const SizedBox(height: 24),
-
           if (isEditing)
             ElevatedButton.icon(
               onPressed: saveProfile,
               icon: const Icon(Icons.save_outlined),
               label: const Text('Salvar Alterações'),
-            )
-          else
-            OutlinedButton.icon(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              icon: const Icon(Icons.arrow_back),
-              label: const Text('Voltar'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                side: const BorderSide(color: AppColors.primary),
-                minimumSize: const Size(double.infinity, 52),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
+            ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.pushNamedAndRemoveUntil(
+                context,
+                '/login',
+                (route) => false,
+              );
+            },
+            icon: const Icon(Icons.logout),
+            label: const Text('Sair'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.danger,
+              side: const BorderSide(color: AppColors.danger),
+              minimumSize: const Size(double.infinity, 48),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
             ),
+          ),
         ],
       ),
     );
@@ -261,6 +269,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
           icon: Icons.person_outline,
           label: 'Responsável',
           value: AppData.companyProfile.responsibleName,
+        ),
+        const Divider(height: 24),
+        _buildInfoRow(
+          icon: Icons.badge_outlined,
+          label: 'CNPJ',
+          value: AppData.companyProfile.cnpj.isEmpty
+              ? 'Não informado'
+              : AppData.companyProfile.cnpj,
         ),
         const Divider(height: 24),
         _buildInfoRow(
@@ -328,6 +344,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           decoration: const InputDecoration(
             labelText: 'Responsável',
             prefixIcon: Icon(Icons.person_outline),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: cnpjController,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'CNPJ',
+            hintText: '00.000.000/0000-00',
+            prefixIcon: Icon(Icons.badge_outlined),
           ),
         ),
         const SizedBox(height: 16),
